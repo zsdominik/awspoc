@@ -41,10 +41,6 @@ public class BookController {
         return findOneBookOrThrowExp(bookId);
     }
 
-    private Book findOneBookOrThrowExp(@PathVariable("id") String bookId) {
-        return bookRepository.findById(bookId).orElseThrow(() -> new ResourceNotFoundException("Book not found with id: " + bookId));
-    }
-
     @GetMapping("/books/{id}/image")
     public ResponseEntity<byte[]> getBookImage(@PathVariable(value = "id") String bookId) throws IOException {
         S3Object fullObject = amazonS3client.getObject(new GetObjectRequest(BUCKET_NAME, KEY_PREFIX + bookId));
@@ -72,7 +68,7 @@ public class BookController {
         return bookRepository.save(book);
     }
 
-    @PutMapping("/books/{id}/upload")
+    @PatchMapping("/books/{id}/image")
     public ResponseEntity<Void> uploadBookImage(@PathVariable(value = "id") String bookId, @RequestPart MultipartFile imageOfBook) throws IOException {
         amazonS3client.putObject(new PutObjectRequest(BUCKET_NAME, KEY_PREFIX + bookId, convertMultipartToFile(imageOfBook)));
         return ResponseEntity.ok().build();
@@ -96,6 +92,10 @@ public class BookController {
         Book bookToDelete = findOneBookOrThrowExp(bookId);
         bookRepository.delete(bookToDelete);
         return ResponseEntity.ok().build();
+    }
+
+    private Book findOneBookOrThrowExp(@PathVariable("id") String bookId) {
+        return bookRepository.findById(bookId).orElseThrow(() -> new ResourceNotFoundException("Book not found with id: " + bookId));
     }
 
 }
