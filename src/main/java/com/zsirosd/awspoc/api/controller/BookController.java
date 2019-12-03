@@ -2,10 +2,14 @@ package com.zsirosd.awspoc.api.controller;
 
 import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
 import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.PutObjectRequest;
+import com.amazonaws.services.s3.model.S3Object;
 import com.zsirosd.awspoc.entity.Book;
 import com.zsirosd.awspoc.repository.BookRepository;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -41,6 +45,18 @@ public class BookController {
         return bookRepository.findById(bookId).orElseThrow(() -> new ResourceNotFoundException("Book not found with id: " + bookId));
     }
 
+    @GetMapping("/books/{id}/image")
+    public ResponseEntity<byte[]> getBookImage(@PathVariable(value = "id") String bookId) throws IOException {
+        S3Object fullObject = amazonS3client.getObject(new GetObjectRequest(BUCKET_NAME, KEY_PREFIX + bookId));
+        String contentType = fullObject.getObjectMetadata().getContentType();
+        byte[] content = fullObject.getObjectContent().readAllBytes();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.valueOf(contentType));
+        // TODO add cloudfront
+
+        return ResponseEntity.ok().headers(headers).body(content);
+    }
+
     @GetMapping("/books")
     private Iterable<Book> getAllBooks() {
         return bookRepository.findAll();
@@ -62,6 +78,14 @@ public class BookController {
         return ResponseEntity.ok().build();
     }
 
+    private File convertMultipartToFile(MultipartFile fileToConvert) throws IOException {
+        File convertedFile = new File(Objects.requireNonNull(fileToConvert.getOriginalFilename()));
+        FileOutputStream fileOutputStream = new FileOutputStream(convertedFile);
+        fileOutputStream.write(fileToConvert.getBytes());
+        fileOutputStream.close();
+        return convertedFile;
+    }
+
     @PostMapping("/books/{id}")
     public Book createBook(@Valid @RequestBody Book bookDetails) {
         return bookRepository.save(bookDetails);
@@ -74,11 +98,4 @@ public class BookController {
         return ResponseEntity.ok().build();
     }
 
-    private File convertMultipartToFile(MultipartFile fileToConvert) throws IOException {
-        File convertedFile = new File(Objects.requireNonNull(fileToConvert.getOriginalFilename()));
-        FileOutputStream fileOutputStream = new FileOutputStream(convertedFile);
-        fileOutputStream.write(fileToConvert.getBytes());
-        fileOutputStream.close();
-        return convertedFile;
-    }
 }
