@@ -1,6 +1,6 @@
 package com.zsirosd.awspoc.api.request;
 
-public class CreateBookRequest {
+public class CreateAndUpdateBookRequest {
 
     private String title;
     private String description;
@@ -20,4 +20,5 @@ public class CreateBookRequest {
     public void setDescription(String description) {
         this.description = description;
     }
+
 }

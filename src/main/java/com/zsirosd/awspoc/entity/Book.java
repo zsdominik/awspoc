@@ -8,7 +8,8 @@ public class Book {
     private String id;
     private String title;
     private String description;
-    private String imageId;
+    private String imageUrl;
+    private String imageName;
 
     public Book() { }
 
@@ -28,6 +29,16 @@ public class Book {
         return description;
     }
 
+    @DynamoDBAttribute
+    public String getImageUrl() {
+        return imageUrl;
+    }
+
+    @DynamoDBAttribute
+    public String getImageName() {
+        return imageName;
+    }
+
     public void setId(String id) {
         this.id = id;
     }
@@ -40,12 +51,11 @@ public class Book {
         this.description = description;
     }
 
-    @DynamoDBAttribute
-    public String getImageId() {
-        return imageId;
+    public void setImageUrl(String imageUrl) {
+        this.imageUrl = imageUrl;
     }
 
-    public void setImageId(String imageId) {
-        this.imageId = imageId;
+    public void setImageName(String imageName) {
+        this.imageName = imageName;
     }
 }

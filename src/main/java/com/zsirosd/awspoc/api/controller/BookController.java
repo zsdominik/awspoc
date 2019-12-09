@@ -1,28 +1,34 @@
 package com.zsirosd.awspoc.api.controller;
 
+import com.amazonaws.SdkClientException;
 import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
 import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.model.GetObjectRequest;
+import com.amazonaws.services.s3.model.CannedAccessControlList;
+import com.amazonaws.services.s3.model.DeleteObjectRequest;
 import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.s3.model.PutObjectResult;
-import com.amazonaws.services.s3.model.S3Object;
-import com.zsirosd.awspoc.api.request.CreateBookRequest;
-import com.zsirosd.awspoc.api.request.UpdateBookRequest;
+import com.zsirosd.awspoc.api.request.CreateAndUpdateBookRequest;
 import com.zsirosd.awspoc.entity.Book;
 import com.zsirosd.awspoc.repository.BookRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.validation.Valid;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.Objects;
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -30,6 +36,7 @@ public class BookController {
 
     private static final String BUCKET_NAME = "awspoc1662";
     private static final String KEY_PREFIX = "book_images"; // folder name
+    private static final Logger logger = LoggerFactory.getLogger(BookController.class);
 
     private final BookRepository bookRepository;
     private final AmazonS3 amazonS3client;
@@ -51,56 +58,62 @@ public class BookController {
     }
 
     @PutMapping("/books/{id}")
-    public Book updateBook(@PathVariable(value = "id") String bookId, @Valid @RequestBody UpdateBookRequest updateBookRequest) {
+    public Book updateBook(@PathVariable(value = "id") String bookId, @Valid @RequestBody CreateAndUpdateBookRequest createAndUpdateBookRequest) {
         Book updatingBook = findOneBookOrThrowExp(bookId);
-        updatingBook.setTitle(updateBookRequest.getTitle());
-        updatingBook.setDescription(updateBookRequest.getDescription());
-        updatingBook.setImageId(updateBookRequest.getImageId());
+        updatingBook.setTitle(createAndUpdateBookRequest.getTitle());
+        updatingBook.setDescription(createAndUpdateBookRequest.getDescription());
 
         return bookRepository.save(updatingBook);
     }
 
-    @GetMapping("/books/{id}/image")
-    public ResponseEntity<byte[]> getBookImage(@PathVariable(value = "id") String bookId) throws IOException {
-        Book book = findOneBookOrThrowExp(bookId);
-        S3Object fullObject = amazonS3client.getObject(new GetObjectRequest(BUCKET_NAME, KEY_PREFIX + "/" + book.getImageId() + "/thumbnail"));
-        String contentType = fullObject.getObjectMetadata().getContentType();
-        byte[] content = fullObject.getObjectContent().readAllBytes();
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.valueOf(contentType));
-        // TODO add cloudfront
-
-        return ResponseEntity.ok().headers(headers).body(content);
-    }
-
     @PatchMapping("/books/{id}/image")
-    public ResponseEntity<PutObjectResult> uploadBookImage(@PathVariable(value = "id") String bookId, @RequestPart MultipartFile imageMultipart) throws IOException {
-        Book book = findOneBookOrThrowExp(bookId);
-        PutObjectResult result = storeImage(book, imageMultipart);
+    public ResponseEntity<Book> uploadBookImage(@PathVariable(value = "id") String bookId, @RequestPart MultipartFile imageMultipart) throws IOException {
+        Book result = storeNewAndDeleteOldImage(bookId, imageMultipart);
         return ResponseEntity.ok(result);
     }
 
-    private PutObjectResult storeImage(Book book, MultipartFile imageMultipart) throws IOException {
-        File imageFile = convertMultipartToFile(imageMultipart);
-        String imageId = book.getImageId();
-        if (null == imageId) {
-            imageId = UUID.randomUUID().toString();
-            saveNewImageOfBook(book, imageId);
+    private Book storeNewAndDeleteOldImage(String bookId, MultipartFile imageMultipart) throws IOException, SdkClientException {
+        String newImageName = imageMultipart.getOriginalFilename();
+        File newImageFile = convertMultipartToFile(imageMultipart);
+        storeFileToS3(newImageName, newImageFile);
+        Book bookToPatch = findOneBookOrThrowExp(bookId);
+        String oldImageName = bookToPatch.getImageName();
+        Book patchedBook;
+        // TODO handle the scenario of there are different books with same name image (same keys in S3)
+        try {
+            patchedBook = saveNewImageDataOfBookToDb(bookToPatch, newImageName);
+        } catch (Exception e) {
+            logger.error("Cannot store new image data into the database. Rolling back S3");
+            deleteImageFromS3ByName(newImageName);
+            // TODO find better solution
+            return bookToPatch;
         }
-        return storeFileToS3(imageId, imageFile);
+
+        if (null != oldImageName) {
+            deleteImageFromS3ByName(oldImageName);
+        }
+
+        return patchedBook;
     }
 
-    private void saveNewImageOfBook(Book book, String imageId) {
-        book.setImageId(imageId);
-        bookRepository.save(book);
+    private void deleteImageFromS3ByName(String imageName) {
+        amazonS3client.deleteObject(new DeleteObjectRequest(BUCKET_NAME, KEY_PREFIX + "/" + imageName));
     }
 
-    private PutObjectResult storeFileToS3(String fileId, File file) {
-        return amazonS3client.putObject(new PutObjectRequest(BUCKET_NAME, KEY_PREFIX + "/" + fileId + "/thumbnail", file));
+    private void storeFileToS3(String fileName, File file) {
+        amazonS3client.putObject(new PutObjectRequest(BUCKET_NAME, KEY_PREFIX + "/" + fileName,
+                file).withCannedAcl(CannedAccessControlList.PublicRead));
+    }
+
+    private Book saveNewImageDataOfBookToDb(Book bookToPatch, String imageName) {
+        String newImageUrl = amazonS3client.getUrl(BUCKET_NAME, KEY_PREFIX + "/" + imageName).toString();
+        bookToPatch.setImageName(imageName);
+        bookToPatch.setImageUrl(newImageUrl);
+        return bookRepository.save(bookToPatch);
     }
 
     private File convertMultipartToFile(MultipartFile fileToConvert) throws IOException {
-        File convertedFile = new File(Objects.requireNonNull(fileToConvert.getOriginalFilename()));
+        File convertedFile = new File(fileToConvert.getOriginalFilename());
         FileOutputStream fileOutputStream = new FileOutputStream(convertedFile);
         fileOutputStream.write(fileToConvert.getBytes());
         fileOutputStream.close();
@@ -108,10 +121,10 @@ public class BookController {
     }
 
     @PostMapping("/books/{id}")
-    public Book createBook(@Valid @RequestBody CreateBookRequest createBookRequest) {
+    public Book createBook(@Valid @RequestBody CreateAndUpdateBookRequest createAndUpdateBookRequest) {
         Book createdBook = new Book();
-        createdBook.setDescription(createBookRequest.getDescription());
-        createdBook.setTitle(createBookRequest.getTitle());
+        createdBook.setDescription(createAndUpdateBookRequest.getDescription());
+        createdBook.setTitle(createAndUpdateBookRequest.getTitle());
         return bookRepository.save(createdBook);
     }
 
