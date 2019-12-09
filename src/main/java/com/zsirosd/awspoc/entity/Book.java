@@ -13,6 +13,14 @@ public class Book {
 
     public Book() { }
 
+    public Book(String id, String title, String description, String imageUrl, String imageName) {
+        this.id = id;
+        this.title = title;
+        this.description = description;
+        this.imageUrl = imageUrl;
+        this.imageName = imageName;
+    }
+
     @DynamoDBHashKey
     @DynamoDBGeneratedUuid(DynamoDBAutoGenerateStrategy.CREATE)
     public String getId() {

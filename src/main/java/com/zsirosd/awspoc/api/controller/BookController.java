@@ -36,7 +36,7 @@ public class BookController {
 
     private static final String BUCKET_NAME = "awspoc1662";
     private static final String KEY_PREFIX = "book_images"; // folder name
-    private static final Logger logger = LoggerFactory.getLogger(BookController.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(BookController.class);
 
     private final BookRepository bookRepository;
     private final AmazonS3 amazonS3client;
@@ -66,7 +66,7 @@ public class BookController {
         return bookRepository.save(updatingBook);
     }
 
-    @PatchMapping("/books/{id}/image")
+    @PatchMapping("/books/{id}")
     public ResponseEntity<Book> uploadBookImage(@PathVariable(value = "id") String bookId, @RequestPart MultipartFile imageMultipart) throws IOException {
         Book result = storeNewAndDeleteOldImage(bookId, imageMultipart);
         return ResponseEntity.ok(result);
@@ -83,7 +83,7 @@ public class BookController {
         try {
             patchedBook = saveNewImageDataOfBookToDb(bookToPatch, newImageName);
         } catch (Exception e) {
-            logger.error("Cannot store new image data into the database. Rolling back S3");
+            LOGGER.error("Cannot store new image data into the database. Rolling back S3");
             deleteImageFromS3ByName(newImageName);
             // TODO find better solution
             return bookToPatch;
@@ -107,9 +107,9 @@ public class BookController {
 
     private Book saveNewImageDataOfBookToDb(Book bookToPatch, String imageName) {
         String newImageUrl = amazonS3client.getUrl(BUCKET_NAME, KEY_PREFIX + "/" + imageName).toString();
-        bookToPatch.setImageName(imageName);
-        bookToPatch.setImageUrl(newImageUrl);
-        return bookRepository.save(bookToPatch);
+        // TODO create builder
+        Book patchedBook = new Book(bookToPatch.getId(), bookToPatch.getTitle(), bookToPatch.getDescription(), newImageUrl, imageName);
+        return bookRepository.save(patchedBook);
     }
 
     private File convertMultipartToFile(MultipartFile fileToConvert) throws IOException {
